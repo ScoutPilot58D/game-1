@@ -10,21 +10,25 @@
       padding: 0;
       box-sizing: border-box;
     }
-    body {
+    html, body {
+      width: 100%;
+      height: 100%;
       background-color: #000;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
       overflow: hidden;
     }
     #game-container {
-      display: flex;
-      justify-content: center;
-      align-items: center;
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    #game-container canvas {
+      display: block;
+      margin: 0 auto;
     }
   </style>
-  <script type="module" crossorigin src="/game-1/assets/index-D4k_LQ6N.js"></script>
+  <script type="module" crossorigin src="/game-1/assets/index-6zcHICWv.js"></script>
 </head>
 <body>
   <div id="game-container"></div>
