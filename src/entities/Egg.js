@@ -19,13 +19,22 @@ export default class Egg {
     scene.physics.add.existing(this.sprite);
     this.sprite.body.setSize(14, 18);
 
-    // Physics - egg falls and bounces
-    this.sprite.body.setBounce(0.4);
-    this.sprite.body.setCollideWorldBounds(false);
-    this.sprite.body.setDragX(100);
+    // Physics - egg falls and bounces with satisfying arcade feel
+    this.sprite.body.setBounce(0.8, 0.75); // High bounce for arcade feel
+    this.sprite.body.setCollideWorldBounds(true);
+    this.sprite.body.setDragX(30); // Low drag so it rolls across platforms
+    this.sprite.body.setMaxVelocity(400, 600);
 
     // Store reference
     this.sprite.eggInstance = this;
+
+    // Apply initial velocity on next frame to ensure physics body is ready
+    scene.time.delayedCall(1, () => {
+      if (this.sprite && this.sprite.body) {
+        const horizontalSpeed = Phaser.Math.Between(40, 65) * (Math.random() < 0.5 ? -1 : 1);
+        this.sprite.body.setVelocityX(horizontalSpeed); // Gentle sideways drift
+      }
+    });
 
     // Start hatch timer
     this.hatchTimer = scene.time.delayedCall(EGG_HATCH_TIME, () => {

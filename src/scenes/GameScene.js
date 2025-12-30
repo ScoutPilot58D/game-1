@@ -14,7 +14,7 @@ import {
 } from '../utils/constants.js';
 import Enemy from '../entities/Enemy.js';
 import Egg from '../entities/Egg.js';
-import LavaHand from '../entities/LavaHand.js';
+import LavaFlame from '../entities/LavaFlame.js';
 import { soundManager } from '../utils/SoundManager.js';
 import { createRiderAnimationFrames, createEggSprite, createPlatformTexture, SPRITE_COLORS } from '../utils/SpriteGenerator.js';
 
@@ -33,8 +33,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   create() {
-    // Initialize sound
+    // Initialize sound and start music
     soundManager.init();
+    soundManager.startMusic(1);
 
     // Generate sprite textures
     this.createSpriteTextures();
@@ -52,8 +53,8 @@ export default class GameScene extends Phaser.Scene {
     // Create lava
     this.createLava();
 
-    // Create lava hand hazard
-    this.lavaHand = new LavaHand(this);
+    // Create lava flame hazard
+    this.lavaFlame = new LavaFlame(this);
 
     // Create enemy group for collisions
     this.enemySprites = this.physics.add.group();
@@ -75,6 +76,11 @@ export default class GameScene extends Phaser.Scene {
       right: Phaser.Input.Keyboard.KeyCodes.D
     });
     this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.escKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+
+    // Pause menu state
+    this.isPaused = false;
+    this.pauseMenu = null;
 
     // Track key states for tap-only input (no holding)
     this.canFlap = true;
@@ -101,11 +107,11 @@ export default class GameScene extends Phaser.Scene {
     createRiderAnimationFrames(this, SPRITE_COLORS.SHADOW_LORD.bird, SPRITE_COLORS.SHADOW_LORD.knight, 'shadow_lord');
     createEggSprite(this);
 
-    // Generate platform textures for each size used
-    createPlatformTexture(this, 150, 20);
-    createPlatformTexture(this, 250, 20);
+    // Generate platform textures for each size used across all configs
     createPlatformTexture(this, 120, 20);
+    createPlatformTexture(this, 150, 20);
     createPlatformTexture(this, 180, 20);
+    createPlatformTexture(this, 250, 20);
 
     // Create flap animations for each rider type
     this.createFlapAnimations();
@@ -155,23 +161,134 @@ export default class GameScene extends Phaser.Scene {
 
   createPlatforms() {
     this.platforms = this.physics.add.staticGroup();
+    this.platformSprites = [];
+    this.platformsMoving = false;
+    this.platformMoveSpeed = 0.075; // Start very slow
 
-    const platformData = [
-      { x: 120, y: 150, width: 150, height: 20 },
-      { x: 680, y: 150, width: 150, height: 20 },
-      { x: 400, y: 250, width: 250, height: 20 },
-      { x: 100, y: 380, width: 120, height: 20 },
-      { x: 700, y: 380, width: 120, height: 20 },
-      { x: 400, y: 480, width: 180, height: 20 }
+    // Platform configurations - different layouts for variety
+    this.platformConfigs = [
+      // Config 0: Default layout
+      [
+        { x: 120, y: 150, width: 150, height: 20 },
+        { x: 680, y: 150, width: 150, height: 20 },
+        { x: 400, y: 250, width: 250, height: 20 },
+        { x: 100, y: 380, width: 120, height: 20 },
+        { x: 700, y: 380, width: 120, height: 20 },
+        { x: 400, y: 480, width: 180, height: 20 }
+      ],
+      // Config 1: Shifted middle
+      [
+        { x: 150, y: 150, width: 150, height: 20 },
+        { x: 650, y: 150, width: 150, height: 20 },
+        { x: 200, y: 280, width: 180, height: 20 },
+        { x: 600, y: 280, width: 180, height: 20 },
+        { x: 400, y: 380, width: 250, height: 20 },
+        { x: 400, y: 500, width: 120, height: 20 }
+      ],
+      // Config 2: Staggered
+      [
+        { x: 100, y: 180, width: 120, height: 20 },
+        { x: 700, y: 120, width: 120, height: 20 },
+        { x: 300, y: 250, width: 150, height: 20 },
+        { x: 500, y: 320, width: 150, height: 20 },
+        { x: 150, y: 420, width: 180, height: 20 },
+        { x: 650, y: 450, width: 180, height: 20 }
+      ],
+      // Config 3: Wide gaps
+      [
+        { x: 100, y: 150, width: 120, height: 20 },
+        { x: 700, y: 150, width: 120, height: 20 },
+        { x: 400, y: 220, width: 180, height: 20 },
+        { x: 200, y: 350, width: 150, height: 20 },
+        { x: 600, y: 350, width: 150, height: 20 },
+        { x: 400, y: 480, width: 250, height: 20 }
+      ]
     ];
 
-    platformData.forEach(data => {
+    this.currentPlatformConfig = 0;
+    this.createPlatformsFromConfig(this.platformConfigs[0]);
+  }
+
+  createPlatformsFromConfig(config) {
+    config.forEach((data, index) => {
       const textureKey = `platform_${data.width}_${data.height}`;
       const platform = this.add.sprite(data.x, data.y, textureKey);
       this.platforms.add(platform);
-      // Adjust collision body to match visible platform (exclude stalactite part)
       platform.body.setSize(data.width, data.height);
       platform.body.setOffset(0, 0);
+      platform.platformIndex = index;
+      platform.platformData = { ...data };
+      // Movement properties - alternate directions, vary range
+      platform.moveDirection = index % 2 === 0 ? 1 : -1;
+      platform.moveRange = 80 + (index * 15); // Larger movement range
+      platform.baseX = data.x;
+      this.platformSprites.push(platform);
+    });
+  }
+
+  updatePlatformMovement() {
+    if (!this.platformsMoving) return;
+
+    this.platformSprites.forEach(platform => {
+      // Move platform
+      platform.x += this.platformMoveSpeed * platform.moveDirection;
+
+      // Reverse direction at range limits
+      if (platform.x > platform.baseX + platform.moveRange) {
+        platform.moveDirection = -1;
+      } else if (platform.x < platform.baseX - platform.moveRange) {
+        platform.moveDirection = 1;
+      }
+
+      // Update physics body position
+      platform.body.reset(platform.x, platform.y);
+    });
+  }
+
+  transitionPlatforms() {
+    // Pick a new random config (different from current)
+    let newConfig;
+    do {
+      newConfig = Phaser.Math.Between(0, this.platformConfigs.length - 1);
+    } while (newConfig === this.currentPlatformConfig && this.platformConfigs.length > 1);
+
+    this.currentPlatformConfig = newConfig;
+    const targetConfig = this.platformConfigs[newConfig];
+
+    // Animate platforms to new positions
+    this.platformSprites.forEach((platform, index) => {
+      const target = targetConfig[index];
+      const oldWidth = platform.platformData.width;
+      const newWidth = target.width;
+
+      // Fade out, move, change texture if needed, fade in
+      this.tweens.add({
+        targets: platform,
+        alpha: 0,
+        duration: 300,
+        onComplete: () => {
+          // Update texture if size changed
+          if (oldWidth !== newWidth) {
+            const newKey = `platform_${target.width}_${target.height}`;
+            platform.setTexture(newKey);
+            platform.body.setSize(target.width, target.height);
+          }
+
+          // Move to new position
+          platform.x = target.x;
+          platform.y = target.y;
+          platform.baseX = target.x; // Update base position for movement
+          platform.body.reset(target.x, target.y);
+          platform.platformData = { ...target };
+
+          // Fade back in
+          this.tweens.add({
+            targets: platform,
+            alpha: 1,
+            duration: 300
+          });
+        }
+      });
     });
   }
 
@@ -285,6 +402,31 @@ export default class GameScene extends Phaser.Scene {
     this.scoreText = this.add.text(20, 20, `SCORE: ${this.score}`, textStyle);
     this.waveText = this.add.text(GAME_WIDTH / 2, 20, `WAVE: ${this.wave}`, textStyle).setOrigin(0.5, 0);
     this.livesText = this.add.text(GAME_WIDTH - 20, 20, `LIVES: ${this.getLivesDisplay()}`, textStyle).setOrigin(1, 0);
+
+    // Extra life progress bar
+    const barWidth = 100;
+    const barHeight = 6;
+    const barX = 20;
+    const barY = 45;
+
+    this.extraLifeBarBg = this.add.rectangle(barX, barY, barWidth, barHeight, 0x333333);
+    this.extraLifeBarBg.setOrigin(0, 0);
+    this.extraLifeBarFill = this.add.rectangle(barX, barY, 0, barHeight, 0x00FF00);
+    this.extraLifeBarFill.setOrigin(0, 0);
+    this.extraLifeLabel = this.add.text(barX + barWidth + 8, barY - 2, '1UP', {
+      fontSize: '12px',
+      fontFamily: 'Arial',
+      color: '#00FF00'
+    });
+
+    this.updateExtraLifeBar();
+  }
+
+  updateExtraLifeBar() {
+    const prevThreshold = this.nextExtraLife - EXTRA_LIFE_SCORE;
+    const progress = (this.score - prevThreshold) / EXTRA_LIFE_SCORE;
+    const clampedProgress = Math.max(0, Math.min(1, progress));
+    this.extraLifeBarFill.width = clampedProgress * 100;
   }
 
   getLivesDisplay() {
@@ -294,6 +436,20 @@ export default class GameScene extends Phaser.Scene {
   startWave() {
     // Don't start checking for completion until enemies spawn
     this.waveInProgress = false;
+
+    // Enable platform movement starting wave 4
+    if (this.wave >= 4 && !this.platformsMoving) {
+      this.platformsMoving = true;
+    }
+
+    // Increase platform speed gradually each wave after 4
+    if (this.wave >= 4) {
+      // Starts at 0.075, increases by 0.025 per wave, caps at 0.25
+      this.platformMoveSpeed = Math.min(0.25, 0.075 + (this.wave - 4) * 0.025);
+    }
+
+    // Update music intensity for this wave
+    soundManager.updateMusicIntensity(this.wave);
 
     // Show wave announcement
     const waveAnnounce = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2, `WAVE ${this.wave}`, {
@@ -324,48 +480,118 @@ export default class GameScene extends Phaser.Scene {
     // Wave composition
     const waveConfig = this.getWaveConfig(this.wave);
 
-    // Spawn points at top of screen
-    const spawnPoints = [
-      { x: 150, y: 50 },
-      { x: 400, y: 50 },
-      { x: 650, y: 50 }
-    ];
+    // Build enemy list
+    const enemies = [];
+    for (let i = 0; i < waveConfig.bounders; i++) enemies.push('BOUNDER');
+    for (let i = 0; i < waveConfig.hunters; i++) enemies.push('HUNTER');
+    for (let i = 0; i < waveConfig.shadowLords; i++) enemies.push('SHADOW_LORD');
 
-    let spawnIndex = 0;
+    // Pick spawn pattern - cycles through patterns, wave 1 always uses standard
+    const patterns = ['standard', 'allAtOnce', 'fromSides', 'fromLava'];
+    const pattern = this.wave === 1 ? 'standard' : patterns[(this.wave - 1) % patterns.length];
+
+    return this.executeSpawnPattern(pattern, enemies);
+  }
+
+  executeSpawnPattern(pattern, enemies) {
     let delay = 0;
 
-    // Spawn Bounders
-    for (let i = 0; i < waveConfig.bounders; i++) {
-      this.time.delayedCall(delay, () => {
-        const spawn = spawnPoints[spawnIndex % spawnPoints.length];
-        this.spawnEnemy(spawn.x + Phaser.Math.Between(-30, 30), spawn.y, 'BOUNDER');
-        spawnIndex++;
-      });
-      delay += 500;
+    switch (pattern) {
+      case 'allAtOnce':
+        // Enemies spawn in quick succession from the top (but not all at once)
+        const topPoints = [
+          { x: 100, y: 50 }, { x: 200, y: 50 }, { x: 300, y: 50 },
+          { x: 500, y: 50 }, { x: 600, y: 50 }, { x: 700, y: 50 }
+        ];
+        enemies.forEach((type, i) => {
+          const spawn = topPoints[i % topPoints.length];
+          this.time.delayedCall(i * 300, () => {
+            this.spawnEnemy(spawn.x + Phaser.Math.Between(-20, 20), spawn.y, type);
+          });
+          delay = i * 300;
+        });
+        delay += 400;
+        break;
+
+      case 'fromSides':
+        // Enemies fly in from left and right edges
+        enemies.forEach((type, i) => {
+          const fromLeft = i % 2 === 0;
+          const x = fromLeft ? -30 : GAME_WIDTH + 30;
+          const y = 80 + (i % 4) * 80; // Stagger vertically
+          this.time.delayedCall(i * 400, () => {
+            const enemy = this.spawnEnemyWithVelocity(x, y, type, fromLeft ? 150 : -150, 0);
+          });
+          delay = i * 400;
+        });
+        delay += 500;
+        break;
+
+      case 'fromLava':
+        // Enemies rise up from the lava
+        const lavaSpawnX = [120, 250, 400, 550, 680];
+        enemies.forEach((type, i) => {
+          const x = lavaSpawnX[i % lavaSpawnX.length];
+          this.time.delayedCall(i * 300, () => {
+            this.spawnEnemyFromLava(x, type);
+          });
+          delay = i * 300;
+        });
+        delay += 800;
+        break;
+
+      case 'standard':
+      default:
+        // Original staggered spawn from top
+        const spawnPoints = [
+          { x: 150, y: 50 },
+          { x: 400, y: 50 },
+          { x: 650, y: 50 }
+        ];
+        enemies.forEach((type, i) => {
+          const spawn = spawnPoints[i % spawnPoints.length];
+          this.time.delayedCall(i * 500, () => {
+            this.spawnEnemy(spawn.x + Phaser.Math.Between(-30, 30), spawn.y, type);
+          });
+          delay = i * 500;
+        });
+        delay += 500;
+        break;
     }
 
-    // Spawn Hunters
-    for (let i = 0; i < waveConfig.hunters; i++) {
-      this.time.delayedCall(delay, () => {
-        const spawn = spawnPoints[spawnIndex % spawnPoints.length];
-        this.spawnEnemy(spawn.x + Phaser.Math.Between(-30, 30), spawn.y, 'HUNTER');
-        spawnIndex++;
-      });
-      delay += 500;
-    }
-
-    // Spawn Shadow Lords
-    for (let i = 0; i < waveConfig.shadowLords; i++) {
-      this.time.delayedCall(delay, () => {
-        const spawn = spawnPoints[spawnIndex % spawnPoints.length];
-        this.spawnEnemy(spawn.x + Phaser.Math.Between(-30, 30), spawn.y, 'SHADOW_LORD');
-        spawnIndex++;
-      });
-      delay += 500;
-    }
-
-    // Return total spawn time so we know when all enemies exist
     return delay;
+  }
+
+  spawnEnemyWithVelocity(x, y, type, vx, vy) {
+    const enemy = new Enemy(this, x, y, type);
+    this.enemies.push(enemy);
+    this.enemySprites.add(enemy.sprite);
+    // Give initial velocity
+    if (enemy.sprite.body) {
+      enemy.sprite.body.setVelocity(vx, vy);
+    }
+    return enemy;
+  }
+
+  spawnEnemyFromLava(x, type) {
+    const y = GAME_HEIGHT - 50;
+    const enemy = new Enemy(this, x, y, type);
+    this.enemies.push(enemy);
+    this.enemySprites.add(enemy.sprite);
+    // Launch upward from lava
+    if (enemy.sprite.body) {
+      enemy.sprite.body.setVelocity(Phaser.Math.Between(-50, 50), -300);
+    }
+    // Visual effect - flash of fire
+    const fireFlash = this.add.circle(x, GAME_HEIGHT - 40, 20, 0xFF4500, 0.8);
+    fireFlash.setDepth(5);
+    this.tweens.add({
+      targets: fireFlash,
+      scale: 2,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => fireFlash.destroy()
+    });
   }
 
   getWaveConfig(wave) {
@@ -402,8 +628,21 @@ export default class GameScene extends Phaser.Scene {
   }
 
   update() {
+    // Check for escape key to show quit confirmation
+    if (Phaser.Input.Keyboard.JustDown(this.escKey)) {
+      if (this.isPaused) {
+        this.hidePauseMenu();
+      } else {
+        this.showPauseMenu();
+      }
+    }
+
+    // Don't update game if paused
+    if (this.isPaused) return;
+
     this.handlePlayerMovement();
     this.handleScreenWrap();
+    this.updatePlatformMovement();
 
     // Update all enemies
     this.enemies.forEach(enemy => {
@@ -417,17 +656,17 @@ export default class GameScene extends Phaser.Scene {
       egg.update();
     });
 
-    // Update lava hand and check for grabs
-    this.lavaHand.update();
-    if (this.lavaHand.isActive && !this.isPlayerInvulnerable) {
-      if (this.lavaHand.checkGrab(this.player)) {
+    // Update lava flame and check for hits
+    this.lavaFlame.update();
+    if (this.lavaFlame.isActive && !this.isPlayerInvulnerable) {
+      if (this.lavaFlame.checkHit(this.player)) {
         this.playerDeath();
       }
     }
-    // Check if lava hand grabs enemies
+    // Check if lava flame hits enemies
     this.enemies.forEach(enemy => {
-      if (enemy.alive && this.lavaHand.isActive && this.lavaHand.checkGrab(enemy.sprite)) {
-        enemy.die(false); // No egg drop when grabbed by hand
+      if (enemy.alive && this.lavaFlame.isActive && this.lavaFlame.checkHit(enemy.sprite)) {
+        enemy.die(false); // No egg drop when hit by flame
       }
     });
 
@@ -568,7 +807,7 @@ export default class GameScene extends Phaser.Scene {
 
   respawnPlayer() {
     this.player.x = 400;
-    this.player.y = 440;
+    this.player.y = 250; // Spawn higher up, safely above lava
     this.player.body.setVelocity(0, 0);
 
     // Invulnerability period
@@ -590,6 +829,7 @@ export default class GameScene extends Phaser.Scene {
     const oldScore = this.score;
     this.score += points;
     this.scoreText.setText(`SCORE: ${this.score}`);
+    this.updateExtraLifeBar();
 
     // Check for extra life
     if (oldScore < this.nextExtraLife && this.score >= this.nextExtraLife) {
@@ -598,21 +838,53 @@ export default class GameScene extends Phaser.Scene {
       this.nextExtraLife += EXTRA_LIFE_SCORE;
       soundManager.extraLife();
 
-      // Flash effect for extra life
+      // Screen flash effect
+      const flash = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x00FF00, 0.3);
+      flash.setDepth(100);
+      this.tweens.add({
+        targets: flash,
+        alpha: 0,
+        duration: 300,
+        onComplete: () => flash.destroy()
+      });
+
+      // Big "EXTRA LIFE!" text
       const extraLifeText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'EXTRA LIFE!', {
-        fontSize: '32px',
+        fontSize: '48px',
         fontFamily: 'Arial',
         color: '#00FF00',
-        fontStyle: 'bold'
-      }).setOrigin(0.5);
+        fontStyle: 'bold',
+        stroke: '#004400',
+        strokeThickness: 4
+      }).setOrigin(0.5).setDepth(101);
 
       this.tweens.add({
         targets: extraLifeText,
-        alpha: 0,
-        y: extraLifeText.y - 50,
-        duration: 1500,
-        onComplete: () => extraLifeText.destroy()
+        scale: { from: 0.5, to: 1.2 },
+        duration: 300,
+        ease: 'Back.easeOut',
+        onComplete: () => {
+          this.tweens.add({
+            targets: extraLifeText,
+            alpha: 0,
+            y: extraLifeText.y - 80,
+            duration: 1200,
+            onComplete: () => extraLifeText.destroy()
+          });
+        }
       });
+
+      // Pulse the lives display
+      this.tweens.add({
+        targets: this.livesText,
+        scale: { from: 1, to: 1.5 },
+        duration: 150,
+        yoyo: true,
+        repeat: 2
+      });
+
+      // Reset the progress bar
+      this.updateExtraLifeBar();
     }
   }
 
@@ -622,6 +894,11 @@ export default class GameScene extends Phaser.Scene {
     // Wave bonus
     const waveBonus = this.wave * 1000;
     this.addScore(waveBonus);
+
+    // Transition platforms every 2 waves (starting wave 2)
+    if (this.wave >= 2 && this.wave % 2 === 0) {
+      this.transitionPlatforms();
+    }
 
     // Show wave complete message
     const completeText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2, `WAVE ${this.wave} COMPLETE!\n+${waveBonus} BONUS`, {
@@ -645,7 +922,111 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
+  showPauseMenu() {
+    this.isPaused = true;
+    this.physics.pause();
+    soundManager.stopMusic();
+
+    // Create dark overlay
+    this.pauseOverlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.7);
+    this.pauseOverlay.setDepth(200);
+
+    // Create pause menu container
+    this.pauseMenu = this.add.container(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+    this.pauseMenu.setDepth(201);
+
+    const titleText = this.add.text(0, -80, 'PAUSED', {
+      fontSize: '48px',
+      fontFamily: 'Arial',
+      color: '#FFFFFF',
+      fontStyle: 'bold'
+    }).setOrigin(0.5);
+
+    const quitText = this.add.text(0, 0, 'Quit to Menu?', {
+      fontSize: '24px',
+      fontFamily: 'Arial',
+      color: '#FFFFFF'
+    }).setOrigin(0.5);
+
+    const yesButton = this.add.text(-60, 60, 'YES', {
+      fontSize: '28px',
+      fontFamily: 'Arial',
+      color: '#FF4444',
+      fontStyle: 'bold'
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+    const noButton = this.add.text(60, 60, 'NO', {
+      fontSize: '28px',
+      fontFamily: 'Arial',
+      color: '#44FF44',
+      fontStyle: 'bold'
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+    const escHint = this.add.text(0, 120, '(or press ESC to resume)', {
+      fontSize: '14px',
+      fontFamily: 'Arial',
+      color: '#888888'
+    }).setOrigin(0.5);
+
+    // Button hover effects
+    yesButton.on('pointerover', () => yesButton.setScale(1.2));
+    yesButton.on('pointerout', () => yesButton.setScale(1));
+    noButton.on('pointerover', () => noButton.setScale(1.2));
+    noButton.on('pointerout', () => noButton.setScale(1));
+
+    // Button click handlers
+    yesButton.on('pointerdown', () => {
+      this.hidePauseMenu();
+      this.quitToMenu();
+    });
+
+    noButton.on('pointerdown', () => {
+      this.hidePauseMenu();
+    });
+
+    this.pauseMenu.add([titleText, quitText, yesButton, noButton, escHint]);
+  }
+
+  hidePauseMenu() {
+    this.isPaused = false;
+    this.physics.resume();
+    soundManager.startMusic(this.wave);
+
+    if (this.pauseOverlay) {
+      this.pauseOverlay.destroy();
+      this.pauseOverlay = null;
+    }
+    if (this.pauseMenu) {
+      this.pauseMenu.destroy();
+      this.pauseMenu = null;
+    }
+  }
+
+  quitToMenu() {
+    // Clean up
+    soundManager.stopMusic();
+    if (this.lavaFlame) {
+      this.lavaFlame.destroy();
+    }
+    this.events.off('enemyDefeated', this.onEnemyDefeated, this);
+    this.events.off('eggCollected', this.onEggCollected, this);
+    this.events.off('eggHatched', this.onEggHatched, this);
+
+    this.scene.start('MenuScene');
+  }
+
   gameOver() {
+    // Stop music
+    soundManager.stopMusic();
+
+    // Clean up lava flame (has timers that need stopping)
+    if (this.lavaFlame) {
+      this.lavaFlame.destroy();
+    }
+
+    // Stop platform movement
+    this.platformsMoving = false;
+
     // Clean up event listeners
     this.events.off('enemyDefeated', this.onEnemyDefeated, this);
     this.events.off('eggCollected', this.onEggCollected, this);

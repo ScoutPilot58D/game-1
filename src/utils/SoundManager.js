@@ -237,7 +237,7 @@ export default class SoundManager {
     osc.stop(this.audioContext.currentTime + 0.15);
   }
 
-  // Lava hand rising - dramatic rising sound
+  // Lava hand rising - dramatic rising sound (kept for compatibility)
   lavaHandRise() {
     if (!this.enabled || !this.audioContext) return;
     this.resume();
@@ -256,6 +256,56 @@ export default class SoundManager {
     gain.gain.setValueAtTime(0.15, this.audioContext.currentTime + 0.3);
     gain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.5);
 
+    osc.start();
+    osc.stop(this.audioContext.currentTime + 0.5);
+  }
+
+  // Flame eruption - whooshing fire sound
+  flameErupt() {
+    if (!this.enabled || !this.audioContext) return;
+    this.resume();
+
+    // Noise-based whoosh for fire
+    const bufferSize = this.audioContext.sampleRate * 0.6;
+    const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const noise = this.audioContext.createBufferSource();
+    noise.buffer = buffer;
+
+    // Bandpass filter for fire-like sound
+    const filter = this.audioContext.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(300, this.audioContext.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(800, this.audioContext.currentTime + 0.15);
+    filter.frequency.exponentialRampToValueAtTime(400, this.audioContext.currentTime + 0.5);
+    filter.Q.value = 2;
+
+    const gain = this.audioContext.createGain();
+    gain.gain.setValueAtTime(0.01, this.audioContext.currentTime);
+    gain.gain.linearRampToValueAtTime(0.35, this.audioContext.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.3, this.audioContext.currentTime + 0.3);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.6);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.audioContext.destination);
+
+    noise.start();
+    noise.stop(this.audioContext.currentTime + 0.6);
+
+    // Add a low rumble
+    const osc = this.audioContext.createOscillator();
+    const oscGain = this.audioContext.createGain();
+    osc.connect(oscGain);
+    oscGain.connect(this.audioContext.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(60, this.audioContext.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(40, this.audioContext.currentTime + 0.4);
+    oscGain.gain.setValueAtTime(0.2, this.audioContext.currentTime);
+    oscGain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.5);
     osc.start();
     osc.stop(this.audioContext.currentTime + 0.5);
   }
@@ -281,6 +331,205 @@ export default class SoundManager {
       osc.start(this.audioContext.currentTime + i * duration);
       osc.stop(this.audioContext.currentTime + i * duration + duration);
     });
+  }
+
+  // ============ RETRO ARCADE GAME MUSIC ============
+
+  startMusic(wave = 1) {
+    if (!this.enabled || !this.audioContext) return;
+    this.resume();
+
+    this.stopMusic();
+    this.musicPlaying = true;
+    this.currentWave = wave;
+    this.musicStep = 0;
+    this.melodyIndex = 0;
+
+    // Classic arcade tempo
+    this.bpm = Math.min(140, 120 + wave * 2);
+    this.stepTime = (60 / this.bpm) / 4; // 16th notes
+
+    // Lower master volume
+    this.musicGain = this.audioContext.createGain();
+    this.musicGain.gain.value = 0.08;
+    this.musicGain.connect(this.audioContext.destination);
+
+    // Define melodic patterns (different phrases that cycle)
+    this.melodyPatterns = [
+      // Pattern A - main theme
+      [392, 0, 440, 0, 494, 0, 523, 0, 494, 0, 440, 0, 392, 0, 0, 0],
+      // Pattern B - variation
+      [523, 0, 494, 0, 440, 392, 440, 0, 494, 0, 523, 0, 587, 0, 0, 0],
+      // Pattern C - bridge
+      [330, 392, 440, 0, 330, 392, 494, 0, 330, 392, 523, 494, 440, 0, 0, 0],
+      // Pattern D - tension
+      [587, 0, 523, 0, 587, 0, 659, 0, 587, 523, 494, 440, 392, 0, 0, 0],
+    ];
+
+    this.bassPatterns = [
+      // Bass A
+      [98, 0, 0, 98, 0, 0, 131, 0, 98, 0, 0, 98, 147, 0, 131, 0],
+      // Bass B
+      [131, 0, 0, 131, 0, 0, 98, 0, 131, 0, 147, 0, 165, 0, 147, 0],
+    ];
+
+    this.currentMelodyPattern = 0;
+    this.currentBassPattern = 0;
+    this.patternStep = 0;
+    this.measureCount = 0;
+
+    this.scheduleStep();
+  }
+
+  stopMusic() {
+    this.musicPlaying = false;
+    if (this.musicTimeout) clearTimeout(this.musicTimeout);
+    if (this.musicGain) {
+      try {
+        this.musicGain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.2);
+      } catch(e) {}
+    }
+  }
+
+  scheduleStep() {
+    if (!this.musicPlaying || !this.audioContext) return;
+
+    const melody = this.melodyPatterns[this.currentMelodyPattern];
+    const bass = this.bassPatterns[this.currentBassPattern];
+
+    // Play melody note
+    const melodyNote = melody[this.patternStep];
+    if (melodyNote > 0) {
+      this.playChipNote(melodyNote, 'square', 0.12, this.stepTime * 1.5);
+    }
+
+    // Play bass note
+    const bassNote = bass[this.patternStep];
+    if (bassNote > 0) {
+      this.playChipNote(bassNote, 'triangle', 0.15, this.stepTime * 2);
+    }
+
+    // Simple percussion on certain beats
+    if (this.patternStep % 4 === 0) {
+      this.playChipDrum('kick');
+    }
+    if (this.patternStep % 4 === 2) {
+      this.playChipDrum('snare');
+    }
+    if (this.patternStep % 2 === 0) {
+      this.playChipDrum('hat');
+    }
+
+    // Advance pattern
+    this.patternStep++;
+    if (this.patternStep >= 16) {
+      this.patternStep = 0;
+      this.measureCount++;
+
+      // Change patterns every 2 measures for variety
+      if (this.measureCount % 2 === 0) {
+        this.currentMelodyPattern = (this.currentMelodyPattern + 1) % this.melodyPatterns.length;
+      }
+      if (this.measureCount % 4 === 0) {
+        this.currentBassPattern = (this.currentBassPattern + 1) % this.bassPatterns.length;
+      }
+    }
+
+    this.musicTimeout = setTimeout(() => this.scheduleStep(), this.stepTime * 1000);
+  }
+
+  playChipNote(freq, type, volume, duration) {
+    const now = this.audioContext.currentTime;
+
+    const osc = this.audioContext.createOscillator();
+    const gain = this.audioContext.createGain();
+
+    osc.type = type;
+    osc.frequency.value = freq;
+
+    // Classic chip envelope
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.setValueAtTime(volume * 0.7, now + duration * 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    osc.connect(gain);
+    gain.connect(this.musicGain);
+
+    osc.start(now);
+    osc.stop(now + duration);
+  }
+
+  playChipDrum(type) {
+    const now = this.audioContext.currentTime;
+
+    if (type === 'kick') {
+      const osc = this.audioContext.createOscillator();
+      const gain = this.audioContext.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(120, now);
+      osc.frequency.exponentialRampToValueAtTime(30, now + 0.08);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(now);
+      osc.stop(now + 0.1);
+    }
+    else if (type === 'snare') {
+      // Noise burst
+      const bufferSize = this.audioContext.sampleRate * 0.06;
+      const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      const noise = this.audioContext.createBufferSource();
+      noise.buffer = buffer;
+      const filter = this.audioContext.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 2000;
+      const gain = this.audioContext.createGain();
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicGain);
+      noise.start(now);
+      noise.stop(now + 0.06);
+    }
+    else if (type === 'hat') {
+      const bufferSize = this.audioContext.sampleRate * 0.02;
+      const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      const noise = this.audioContext.createBufferSource();
+      noise.buffer = buffer;
+      const filter = this.audioContext.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 8000;
+      const gain = this.audioContext.createGain();
+      gain.gain.setValueAtTime(0.04, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicGain);
+      noise.start(now);
+      noise.stop(now + 0.02);
+    }
+  }
+
+  setMusicVolume(volume) {
+    if (this.musicGain) {
+      this.musicGain.gain.value = volume;
+    }
+  }
+
+  updateMusicIntensity(wave) {
+    this.currentWave = wave;
+    this.bpm = Math.min(140, 120 + wave * 2);
+    this.stepTime = (60 / this.bpm) / 4;
   }
 }
 
